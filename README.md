@@ -8,7 +8,11 @@ Il faut seulement un broker Mosquitto et Tkinter :
     sudo apt install mosquitto mosquitto-clients python3-tk
 
 ## Lancement
-    ./lancer_broker.sh              # broker simple (anonyme)
+Il faut TOUJOURS un broker MQTT lancé avant le serveur et les clients
+(sinon : « Broker injoignable : Connection refused »).
+
+    ./lancer_broker.sh              # Mosquitto (ou, s'il est absent, le mini-broker Python)
+    python3 broker.py -v            # mini-broker Python de secours (sans installation)
     ./lancer_broker.sh securise     # broker avec ACL (compte "serveur"/"serveur")
 
     python3 serveur.py              # serveur de messagerie (IHM Tkinter)
@@ -23,5 +27,6 @@ Il faut seulement un broker Mosquitto et Tkinter :
 - `messagerie/gui_serveur.py`  : IHM du serveur (journal, utilisateurs, sessions, listes, stats)
 - `messagerie/gui_client.py`   : IHM du client (mails, répondre/répondre à tous/transférer, PJ, contacts, listes, export)
 - `messagerie/export.py`       : export d'une discussion en TXT / JSON
+- `broker.py`                  : mini-broker MQTT 3.1.1 en Python (si Mosquitto absent)
 - `mosquitto/`                 : configurations Mosquitto + ACL
 - `tests/test_integration.py`  : tests d'intégration (broker réel requis)

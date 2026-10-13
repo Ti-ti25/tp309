@@ -490,8 +490,12 @@ class ApplicationClient:
             try:
                 client.connecter()
             except OSError as exc:
-                self.pont.appeler(self._activer_connexion, True,
-                                  f"Broker injoignable : {exc}", c("erreur"))
+                message = f"Broker injoignable : {exc}"
+                if isinstance(exc, ConnectionRefusedError):
+                    message += ("\nAucun broker n'écoute sur ce port : lancez "
+                                "./lancer_broker.sh (ou python3 broker.py), ou indiquez "
+                                "l'adresse IP de la machine qui fait tourner le broker.")
+                self.pont.appeler(self._activer_connexion, True, message, c("erreur"))
                 return
             self.pont.appeler(self._client_ouvert, client, suite)
 
