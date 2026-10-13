@@ -24,15 +24,14 @@ import os
 import queue
 import threading
 import tkinter as tk
-import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from . import protocole as P
 from .client_core import ClientMessagerie, charger_piece_jointe, sonder_broker
 from .export import exporter_json, exporter_texte
+from .theme import GestionnaireTheme, c
 
 FICHIER_PREFERENCES = os.path.join(os.path.expanduser("~"), ".messagerie_mqtt.json")
-VERT, ROUGE, GRIS = "#1a7f37", "#c62828", "#777777"
 
 
 # ======================================================================
@@ -75,12 +74,14 @@ class Notification(tk.Toplevel):
         super().__init__(maitre)
         self.overrideredirect(True)                       # pas de barre de titre
         self.attributes("-topmost", True)
-        cadre = tk.Frame(self, bg="#263238", padx=12, pady=8)
+        self.ignorer_theme = True                          # couleurs propres à la bulle
+        cadre = tk.Frame(self, bg=c("bulle"), padx=16, pady=10,
+                         highlightthickness=2, highlightbackground=c("accent"))
         cadre.pack(fill="both", expand=True)
-        tk.Label(cadre, text=titre, bg="#263238", fg="white",
+        tk.Label(cadre, text="✉  " + titre, bg=c("bulle"), fg=c("bulle_texte"),
                  font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
-        tk.Label(cadre, text=texte, bg="#263238", fg="#cfd8dc", justify="left",
-                 wraplength=300).pack(anchor="w")
+        tk.Label(cadre, text=texte, bg=c("bulle"), fg=c("bulle_texte"), justify="left",
+                 wraplength=300).pack(anchor="w", pady=(2, 0))
         self.update_idletasks()
         x = maitre.winfo_rootx() + maitre.winfo_width() - self.winfo_width() - 20
         y = maitre.winfo_rooty() + maitre.winfo_height() - self.winfo_height() - 40
@@ -105,7 +106,7 @@ class DialogueInscription(simpledialog.Dialog):
             champ.grid(row=ligne, column=1, padx=4, pady=3)
             self.champs[cle] = champ
         ttk.Label(maitre, text="Identifiant : 2 à 32 caractères parmi a-z 0-9 . _ -",
-                  foreground=GRIS).grid(row=len(libelles), column=0, columnspan=2)
+                  style="Doux.TLabel").grid(row=len(libelles), column=0, columnspan=2)
         return self.champs["prenom"]
 
     def validate(self):
@@ -232,10 +233,11 @@ class FenetreRedaction(tk.Toplevel):
         self.rafraichir_pj()
 
         bas = ttk.Frame(self, padding=8)
-        self.etat = ttk.Label(bas, text="Ctrl+Entrée pour envoyer", foreground=GRIS)
+        self.etat = ttk.Label(bas, text="Ctrl+Entrée pour envoyer", style="Doux.TLabel")
         self.etat.pack(side="left")
         ttk.Button(bas, text="Annuler", command=self.destroy).pack(side="right")
-        self.bouton_envoyer = ttk.Button(bas, text="Envoyer ✉", command=self.envoyer)
+        self.bouton_envoyer = ttk.Button(bas, text="Envoyer ✉", command=self.envoyer,
+                                         style="Accent.TButton")
         self.bouton_envoyer.pack(side="right", padx=6)
 
         # Les cadres du bas sont placés AVANT la zone de texte extensible :
@@ -324,15 +326,13 @@ class ApplicationClient:
     def __init__(self, racine):
         self.racine = racine
         self.racine.title("Messagerie MQTT")
-        self.racine.geometry("1100x700")
+        self.racine.geometry("1200x720")
         self.racine.minsize(820, 520)
         self.racine.protocol("WM_DELETE_WINDOW", self.quitter)
-        style = ttk.Style()
-        if "clam" in style.theme_names():
-            style.theme_use("clam")
-        style.configure("Treeview", rowheight=22)
-        self.police_grasse = tkfont.nametofont("TkDefaultFont").copy()
-        self.police_grasse.configure(weight="bold")
+        # Thème clair / sombre (préférence mémorisée dans ~/.messagerie_theme.json)
+        self.theme = GestionnaireTheme(racine)
+        self.theme.sur_changement(self._theme_change)
+        self.police_grasse = self.theme.police_grasse
 
         self.pont = PontThreads(racine)
         self.client = None
@@ -370,7 +370,7 @@ class ApplicationClient:
         elif sur_echec:
             sur_echec(rep.get("error", "erreur inconnue"))
         else:
-            self.statut("Erreur : " + rep.get("error", "erreur inconnue"), ROUGE)
+            self.statut("Erreur : " + rep.get("error", "erreur inconnue"), c("erreur"))
             messagebox.showerror("Erreur", rep.get("error", "erreur inconnue"),
                                  parent=self.racine)
 
@@ -407,35 +407,44 @@ class ApplicationClient:
             self.cadre.destroy()
         self.racine.config(menu="")
         self.racine.title("Messagerie MQTT - connexion")
-        self.cadre = ttk.Frame(self.racine, padding=30)
-        self.cadre.pack(expand=True)
-        ttk.Label(self.cadre, text="✉  Messagerie MQTT",
-                  font=("TkDefaultFont", 18, "bold")).grid(row=0, column=0, columnspan=3,
-                                                         pady=(0, 18))
+        self.cadre = ttk.Frame(self.racine)
+        self.cadre.pack(fill="both", expand=True)
+        self.bouton_theme_connexion = ttk.Button(self.cadre, style="Outil.TButton",
+                                                 command=self.theme.basculer)
+        self.bouton_theme_connexion.pack(anchor="ne", padx=10, pady=10)
+        carte = ttk.Frame(self.cadre, style="Carte.TFrame", padding=(40, 30))
+        carte.place(relx=0.5, rely=0.5, anchor="center")
+        ttk.Label(carte, text="✉  Messagerie MQTT", style="CarteTitre.TLabel").grid(
+            row=0, column=0, columnspan=3)
+        ttk.Label(carte, text="R309 - Programmation événementielle",
+                  style="CarteDoux.TLabel").grid(row=1, column=0, columnspan=3, pady=(2, 22))
         self.vars_connexion = {}
         champs = [("hote", "Broker MQTT"), ("port", "Port"), ("domaine", "Domaine"),
                   ("utilisateur", "Utilisateur"), ("mot_de_passe", "Mot de passe")]
-        for ligne, (cle, libelle) in enumerate(champs, 1):
-            ttk.Label(self.cadre, text=libelle + " :").grid(row=ligne, column=0, sticky="e",
-                                                            padx=6, pady=4)
+        for ligne, (cle, libelle) in enumerate(champs, 2):
+            ttk.Label(carte, text=libelle, style="Carte.TLabel").grid(
+                row=ligne, column=0, sticky="w", padx=(0, 14), pady=5)
             variable = tk.StringVar(value=str(self.preferences.get(cle, "")))
-            champ = ttk.Entry(self.cadre, textvariable=variable, width=30,
+            champ = ttk.Entry(carte, textvariable=variable, width=30,
                               show="•" if cle == "mot_de_passe" else "")
             champ.grid(row=ligne, column=1, columnspan=2, sticky="ew", pady=4)
             champ.bind("<Return>", lambda e: self.se_connecter())
             self.vars_connexion[cle] = variable
             if cle == ("mot_de_passe" if self.preferences.get("utilisateur") else "utilisateur"):
                 champ.focus_set()
-        boutons = ttk.Frame(self.cadre)
-        boutons.grid(row=7, column=0, columnspan=3, pady=14)
+        boutons = ttk.Frame(carte, style="Lecture.TFrame")
+        boutons.grid(row=8, column=0, columnspan=3, pady=(20, 10))
         self.boutons_connexion = [
-            ttk.Button(boutons, text="Se connecter", command=self.se_connecter),
+            ttk.Button(boutons, text="Se connecter", command=self.se_connecter,
+                       style="Accent.TButton"),
             ttk.Button(boutons, text="Créer un compte…", command=self.creer_compte),
             ttk.Button(boutons, text="Tester le broker", command=self.tester_broker)]
         for bouton in self.boutons_connexion:
             bouton.pack(side="left", padx=4)
-        self.etat_connexion = ttk.Label(self.cadre, text="", foreground=GRIS, wraplength=380)
-        self.etat_connexion.grid(row=8, column=0, columnspan=3)
+        self.etat_connexion = ttk.Label(carte, text="", style="CarteDoux.TLabel",
+                                        wraplength=380, justify="center")
+        self.etat_connexion.grid(row=9, column=0, columnspan=3)
+        self._theme_change()
 
     def _parametres(self):
         valeurs = {cle: var.get().strip() for cle, var in self.vars_connexion.items()}
@@ -449,17 +458,17 @@ class ApplicationClient:
         valeurs["utilisateur"] = valeurs["utilisateur"].lower()
         return valeurs
 
-    def _activer_connexion(self, actif, message="", couleur=GRIS):
+    def _activer_connexion(self, actif, message="", couleur=None):
         for bouton in self.boutons_connexion:
             bouton.configure(state="normal" if actif else "disabled")
-        self.etat_connexion.configure(text=message, foreground=couleur)
+        self.etat_connexion.configure(text=message, foreground=couleur or c("doux"))
 
     def tester_broker(self):
         """Sonde TCP brute dans un thread (l'IHM reste réactive pendant le test)."""
         try:
             valeurs = self._parametres()
         except ValueError as exc:
-            self._activer_connexion(True, str(exc), ROUGE)
+            self._activer_connexion(True, str(exc), c("erreur"))
             return
         self._activer_connexion(False, "Test du broker en cours…")
 
@@ -467,7 +476,7 @@ class ApplicationClient:
             ok, message, latence = sonder_broker(valeurs["hote"], valeurs["port"])
             if latence is not None:
                 message += f" ({latence:.1f} ms)"
-            self.pont.appeler(self._activer_connexion, True, message, VERT if ok else ROUGE)
+            self.pont.appeler(self._activer_connexion, True, message, c("succes") if ok else c("erreur"))
 
         threading.Thread(target=travail, daemon=True).start()
 
@@ -482,7 +491,7 @@ class ApplicationClient:
                 client.connecter()
             except OSError as exc:
                 self.pont.appeler(self._activer_connexion, True,
-                                  f"Broker injoignable : {exc}", ROUGE)
+                                  f"Broker injoignable : {exc}", c("erreur"))
                 return
             self.pont.appeler(self._client_ouvert, client, suite)
 
@@ -499,10 +508,10 @@ class ApplicationClient:
         try:
             valeurs = self._parametres()
         except ValueError as exc:
-            self._activer_connexion(True, str(exc), ROUGE)
+            self._activer_connexion(True, str(exc), c("erreur"))
             return
         if not valeurs["utilisateur"] or not valeurs["mot_de_passe"]:
-            self._activer_connexion(True, "Indiquez un utilisateur et un mot de passe.", ROUGE)
+            self._activer_connexion(True, "Indiquez un utilisateur et un mot de passe.", c("erreur"))
             return
 
         def authentifier():
@@ -514,7 +523,7 @@ class ApplicationClient:
 
     def _apres_login(self, rep, valeurs):
         if not rep.get("ok"):
-            self._activer_connexion(True, rep.get("error"), ROUGE)
+            self._activer_connexion(True, rep.get("error"), c("erreur"))
             self.client.fermer()
             self.client = None
             return
@@ -528,7 +537,7 @@ class ApplicationClient:
         try:
             valeurs = self._parametres()
         except ValueError as exc:
-            self._activer_connexion(True, str(exc), ROUGE)
+            self._activer_connexion(True, str(exc), c("erreur"))
             return
         saisie = DialogueInscription(self.racine).result
         if not saisie:
@@ -544,11 +553,11 @@ class ApplicationClient:
 
     def _apres_inscription(self, rep, saisie):
         if not rep.get("ok"):
-            self._activer_connexion(True, "Inscription refusée : " + rep.get("error", ""), ROUGE)
+            self._activer_connexion(True, "Inscription refusée : " + rep.get("error", ""), c("erreur"))
             return
         self.vars_connexion["utilisateur"].set(saisie["username"].lower())
         self.vars_connexion["mot_de_passe"].set(saisie["password"])
-        self._activer_connexion(True, f"Compte {rep['data']['address']} créé.", VERT)
+        self._activer_connexion(True, f"Compte {rep['data']['address']} créé.", c("succes"))
         self.se_connecter()
 
     # ==================================================================
@@ -568,6 +577,7 @@ class ApplicationClient:
         self._creer_onglet_groupes()
         self._creer_barre_etat()
         self._raccourcis()
+        self._theme_change()
 
         self.actualiser()
         self.charger_contacts()
@@ -575,7 +585,7 @@ class ApplicationClient:
         self.charger_groupes()
         if self.client.serveur_en_ligne is not None:
             self.sur_statut_serveur({"online": self.client.serveur_en_ligne})
-        self.statut(f"Connecté en tant que {self.client.adresse} (IP {self.client.ip}).", VERT)
+        self.statut(f"Connecté en tant que {self.client.adresse} (IP {self.client.ip}).", c("succes"))
 
     def _creer_menu(self):
         barre = tk.Menu(self.racine)
@@ -604,14 +614,30 @@ class ApplicationClient:
         compte = tk.Menu(barre, tearoff=False)
         compte.add_command(label="Modifier mon profil…", command=self.modifier_profil)
         barre.add_cascade(label="Compte", menu=compte)
+        affichage = tk.Menu(barre, tearoff=False)
+        self.var_sombre = tk.BooleanVar(value=self.theme.sombre)
+        affichage.add_checkbutton(label="Thème sombre", accelerator="Ctrl+D",
+                                  variable=self.var_sombre, command=self.theme.basculer)
+        barre.add_cascade(label="Affichage", menu=affichage)
         aide = tk.Menu(barre, tearoff=False)
         aide.add_command(label="À propos", command=self.a_propos)
         barre.add_cascade(label="Aide", menu=aide)
         self.racine.config(menu=barre)
 
     def _creer_barre_outils(self):
-        barre = ttk.Frame(self.cadre, padding=(6, 6))
+        barre = ttk.Frame(self.cadre, padding=(8, 6))
         barre.pack(fill="x")
+        # Les éléments de droite sont placés EN PREMIER : si la fenêtre est
+        # étroite, ce sont les boutons de gauche qui rétrécissent, pas la recherche.
+        self.bouton_theme = ttk.Button(barre, style="Outil.TButton",
+                                       command=self.theme.basculer)
+        self.bouton_theme.pack(side="right", padx=(8, 0))
+        self.var_recherche = tk.StringVar()
+        recherche = ttk.Entry(barre, textvariable=self.var_recherche, width=16)
+        recherche.pack(side="right", padx=4)
+        ttk.Label(barre, text="🔍").pack(side="right")
+        # Filtrage instantané : chaque frappe déclenche le callback.
+        recherche.bind("<KeyRelease>", lambda e: self.afficher_liste())
         for texte, commande in (("✉ Nouveau", self.nouveau),
                                 ("↩ Répondre", self.repondre),
                                 ("↩↩ Répondre à tous", lambda: self.repondre(tous=True)),
@@ -619,22 +645,19 @@ class ApplicationClient:
                                 ("🗑 Supprimer", self.supprimer),
                                 ("✱ Non lu", self.marquer_non_lu),
                                 ("⟳ Actualiser", self.actualiser)):
-            ttk.Button(barre, text=texte, command=commande).pack(side="left", padx=2)
-        self.var_recherche = tk.StringVar()
-        recherche = ttk.Entry(barre, textvariable=self.var_recherche, width=24)
-        recherche.pack(side="right", padx=4)
-        ttk.Label(barre, text="🔍").pack(side="right")
-        # Filtrage instantané : chaque frappe déclenche le callback.
-        recherche.bind("<KeyRelease>", lambda e: self.afficher_liste())
+            style = "Accent.TButton" if commande == self.nouveau else "Outil.TButton"
+            ttk.Button(barre, text=texte, command=commande, style=style).pack(side="left",
+                                                                              padx=2)
 
     def _creer_barre_etat(self):
-        barre = ttk.Frame(self.racine, relief="sunken", padding=(6, 2))
+        barre = ttk.Frame(self.racine, style="Barre.TFrame", padding=(10, 4))
         barre.pack(fill="x", side="bottom", before=self.cadre)
-        self.etiquette_statut = ttk.Label(barre, text="")
+        self.etiquette_statut = ttk.Label(barre, text="", style="Barre.TLabel")
         self.etiquette_statut.pack(side="left")
-        self.etiquette_horloge = ttk.Label(barre, text="")
+        self.etiquette_horloge = ttk.Label(barre, text="", style="Barre.TLabel")
         self.etiquette_horloge.pack(side="right")
-        self.etiquette_serveur = ttk.Label(barre, text="● serveur ?", foreground=GRIS)
+        self.etiquette_serveur = ttk.Label(barre, text="● serveur ?", style="Barre.TLabel",
+                                           foreground=c("doux"))
         self.etiquette_serveur.pack(side="right", padx=12)
         self.barre_etat = barre
         self._horloge()
@@ -654,6 +677,39 @@ class ApplicationClient:
         r.bind("<Control-t>", lambda e: self.transferer())
         r.bind("<F5>", lambda e: self.actualiser())
         r.bind("<Control-q>", lambda e: self.quitter())
+        r.bind("<Control-d>", lambda e: self.theme.basculer())
+
+    def _theme_change(self):
+        """
+        Appelée après chaque changement de thème : les "tags" des Treeview et
+        des Text ne dépendent d'aucun style, il faut les recolorer à la main.
+        """
+        libelle = "☀ Clair" if self.theme.sombre else "🌙 Sombre"
+        for nom in ("bouton_theme", "bouton_theme_connexion"):
+            bouton = getattr(self, nom, None)
+            if bouton is not None and bouton.winfo_exists():
+                bouton.configure(text=libelle)
+        if getattr(self, "var_sombre", None) is not None:
+            self.var_sombre.set(self.theme.sombre)
+        for nom in ("arbre_contacts", "arbre_annuaire", "arbre_groupes", "arbre_mails"):
+            arbre = getattr(self, nom, None)
+            if arbre is None or not arbre.winfo_exists():
+                continue
+            arbre.tag_configure("en_ligne", foreground=c("succes"))
+            arbre.tag_configure("hors_ligne", foreground=c("doux"))
+            arbre.tag_configure("abonne", foreground=c("succes"))
+            arbre.tag_configure("daemon", foreground=c("erreur"))
+        texte = getattr(self, "texte_lecture", None)
+        if texte is not None and texte.winfo_exists():
+            texte.tag_configure("citation", foreground=c("citation"))
+        etiquette = getattr(self, "etiquette_serveur", None)
+        if etiquette is not None and etiquette.winfo_exists() and self.client:
+            if self.client.serveur_en_ligne is not None:
+                self.sur_statut_serveur({"online": self.client.serveur_en_ligne})
+            else:
+                etiquette.configure(foreground=c("doux"))
+        if getattr(self, "etiquette_statut", None) and self.etiquette_statut.winfo_exists():
+            self.etiquette_statut.configure(foreground="")
 
     def statut(self, texte, couleur=None):
         if getattr(self, "etiquette_statut", None) and self.etiquette_statut.winfo_exists():
@@ -670,11 +726,11 @@ class ApplicationClient:
 
         gauche = ttk.Frame(panneau, padding=4)
         ttk.Label(gauche, text="Dossiers", font=self.police_grasse).pack(anchor="w")
-        self.liste_dossiers = tk.Listbox(gauche, exportselection=False, width=24, height=6,
-                                         activestyle="none")
+        self.liste_dossiers = tk.Listbox(gauche, exportselection=False, width=24, height=4,
+                                         activestyle="none", font=("TkDefaultFont", 11))
         self.liste_dossiers.pack(fill="x", pady=4)
         self.liste_dossiers.bind("<<ListboxSelect>>", self.sur_choix_dossier)
-        self.etiquette_profil = ttk.Label(gauche, text="", foreground=GRIS, justify="left")
+        self.etiquette_profil = ttk.Label(gauche, text="", style="Doux.TLabel", justify="left")
         self.etiquette_profil.pack(anchor="w", pady=10)
         panneau.add(gauche, weight=0)
 
@@ -687,11 +743,11 @@ class ApplicationClient:
                                         selectmode="browse")
         for col, titre, largeur in (("pj", "📎", 30), ("correspondant", "De", 230),
                                     ("objet", "Objet", 360), ("date", "Date", 150)):
-            self.arbre_mails.heading(col, text=titre, command=lambda c=col: self.trier(c))
+            self.arbre_mails.heading(col, text=titre, command=lambda col=col: self.trier(col))
             self.arbre_mails.column(col, width=largeur, stretch=col == "objet",
                                     anchor="center" if col == "pj" else "w")
         self.arbre_mails.tag_configure("non_lu", font=self.police_grasse)
-        self.arbre_mails.tag_configure("daemon", foreground=ROUGE)
+        self.arbre_mails.tag_configure("daemon", foreground=c("erreur"))
         defil = ttk.Scrollbar(cadre_liste, command=self.arbre_mails.yview)
         self.arbre_mails.configure(yscrollcommand=defil.set)
         self.arbre_mails.pack(side="left", fill="both", expand=True)
@@ -701,21 +757,21 @@ class ApplicationClient:
         self.arbre_mails.bind("<Button-3>", self.menu_contextuel_mail)
         droite.add(cadre_liste, weight=1)
 
-        lecture = ttk.Frame(droite, padding=6)
+        lecture = ttk.Frame(droite, padding=(0, 8, 0, 0))
         self.entete_lecture = ttk.Label(lecture, text="Sélectionnez un message.",
-                                        justify="left", anchor="w")
-        self.entete_lecture.pack(fill="x")
+                                        justify="left", anchor="w", style="Gras.TLabel")
+        self.entete_lecture.pack(fill="x", padx=4)
         self.cadre_pj = ttk.Frame(lecture)
         self.cadre_pj.pack(fill="x", pady=2)
         cadre_texte = ttk.Frame(lecture)
         cadre_texte.pack(fill="both", expand=True)
         self.texte_lecture = tk.Text(cadre_texte, wrap="word", state="disabled",
-                                     font=("TkFixedFont", 10), height=10, bg="#fbfbfb")
+                                     font=("TkFixedFont", 10), height=10)
         defil2 = ttk.Scrollbar(cadre_texte, command=self.texte_lecture.yview)
         self.texte_lecture.configure(yscrollcommand=defil2.set)
         self.texte_lecture.pack(side="left", fill="both", expand=True)
         defil2.pack(side="right", fill="y")
-        self.texte_lecture.tag_configure("citation", foreground="#5c6bc0")
+        self.texte_lecture.tag_configure("citation", foreground=c("citation"))
         droite.add(lecture, weight=1)
 
         self.menu_mail = tk.Menu(self.racine, tearoff=False)
@@ -867,7 +923,7 @@ class ApplicationClient:
         def recu(donnees):
             with open(chemin, "wb") as fichier:
                 fichier.write(P.decoder_pj(donnees["data"]))
-            self.statut(f"Pièce jointe enregistrée : {chemin}", VERT)
+            self.statut(f"Pièce jointe enregistrée : {chemin}", c("succes"))
 
         self.req(P.REQ_GET_ATTACHMENT, {"mail_id": self.mail_courant["id"], "index": index},
                  recu, delai=30.0)
@@ -994,7 +1050,7 @@ class ApplicationClient:
                 return
             exporteur = exporter_json if chemin.lower().endswith(".json") else exporter_texte
             exporteur(donnees["mails"], chemin, titre)
-            self.statut(f"{len(donnees['mails'])} message(s) exporté(s) dans {chemin}", VERT)
+            self.statut(f"{len(donnees['mails'])} message(s) exporté(s) dans {chemin}", c("succes"))
 
         self.req(P.REQ_SEARCH_MAILS, criteres, recu)
 
@@ -1014,8 +1070,8 @@ class ApplicationClient:
         for cle, titre, largeur in colonnes:
             arbre.heading(cle, text=titre)
             arbre.column(cle, width=largeur, stretch=cle in ("adresse", "description"))
-        arbre.tag_configure("en_ligne", foreground=VERT)
-        arbre.tag_configure("hors_ligne", foreground=GRIS)
+        arbre.tag_configure("en_ligne", foreground=c("succes"))
+        arbre.tag_configure("hors_ligne", foreground=c("doux"))
         defil = ttk.Scrollbar(cadre, command=arbre.yview)
         arbre.configure(yscrollcommand=defil.set)
         arbre.pack(side="left", fill="both", expand=True)
@@ -1169,7 +1225,7 @@ class ApplicationClient:
             ("nom", "Nom", 120), ("adresse", "Adresse", 180), ("description", "Description", 220),
             ("proprietaire", "Propriétaire", 160), ("membres", "Membres", 70),
             ("abonne", "Abonné", 70)])
-        self.arbre_groupes.tag_configure("abonne", foreground=VERT)
+        self.arbre_groupes.tag_configure("abonne", foreground=c("succes"))
         self.arbre_groupes.bind("<<TreeviewSelect>>", lambda e: self.afficher_membres())
         self.arbre_groupes.bind("<Double-Button-1>",
                                 lambda e: self.ecrire_a(self.arbre_groupes))
@@ -1223,7 +1279,7 @@ class ApplicationClient:
         description = simpledialog.askstring("Nouvelle liste", "Description :",
                                              parent=self.racine) or ""
         self.req(P.REQ_CREATE_GROUP, {"name": nom.strip().lower(), "description": description},
-                 lambda d: self.statut(f"Liste {d['address']} créée.", VERT))
+                 lambda d: self.statut(f"Liste {d['address']} créée.", c("succes")))
 
     def action_groupe(self, type_req):
         addr = self._adresse_selectionnee(self.arbre_groupes)
@@ -1293,14 +1349,14 @@ class ApplicationClient:
             return
         if statut.get("online"):
             self.etiquette_serveur.configure(text=f"● serveur {self.client.domaine} en ligne",
-                                             foreground=VERT)
+                                             foreground=c("succes"))
         else:
             self.etiquette_serveur.configure(text=f"● serveur {self.client.domaine} hors ligne",
-                                             foreground=ROUGE)
-            self.statut("Le serveur de messagerie est hors ligne !", ROUGE)
+                                             foreground=c("erreur"))
+            self.statut("Le serveur de messagerie est hors ligne !", c("erreur"))
 
     def sur_connexion_mqtt(self, connecte, message):
-        self.statut(message, VERT if connecte else ROUGE)
+        self.statut(message, c("succes") if connecte else c("erreur"))
 
     # ==================================================================
     # Profil, déconnexion, fermeture
@@ -1320,7 +1376,7 @@ class ApplicationClient:
 
         def fait(donnees):
             self.client.profil = donnees["profile"]
-            self.statut("Profil mis à jour.", VERT)
+            self.statut("Profil mis à jour.", c("succes"))
 
         self.req(P.REQ_UPDATE_PROFILE, {"prenom": prenom, "nom": nom,
                                         "password": mot_de_passe or None}, fait)

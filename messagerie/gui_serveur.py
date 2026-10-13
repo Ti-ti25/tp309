@@ -16,8 +16,8 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from . import protocole as P
 from .serveur_core import ServeurMessagerie
+from .theme import GestionnaireTheme, c
 
-VERT, ROUGE, ORANGE, GRIS = "#1a7f37", "#c62828", "#e65100", "#777777"
 
 
 class ApplicationServeur:
@@ -29,18 +29,19 @@ class ApplicationServeur:
         self.racine.geometry("1050x640")
         self.racine.minsize(800, 480)
         self.racine.protocol("WM_DELETE_WINDOW", self.quitter)
-        style = ttk.Style()
-        if "clam" in style.theme_names():
-            style.theme_use("clam")
+        # Thème clair / sombre partagé avec le client (~/.messagerie_theme.json)
+        self.theme = GestionnaireTheme(racine)
+        self.theme.sur_changement(self._theme_change)
         self.serveur = None
         self.file = queue.Queue()
         self.etiquettes_stats = {}
 
         self._creer_configuration(defauts)
         self._creer_onglets()
-        self.barre = ttk.Label(self.racine, text="Serveur arrêté.", relief="sunken",
-                               padding=(6, 2))
+        self.barre = ttk.Label(self.racine, text="Serveur arrêté.", style="Barre.TLabel",
+                               padding=(10, 4))
         self.barre.pack(fill="x", side="bottom")
+        self._theme_change()
         self._pomper()
         self._rafraichir_periodiquement()
 
@@ -61,13 +62,18 @@ class ApplicationServeur:
                       show="•" if cle == "mot_de_passe" else "").grid(row=1, column=colonne,
                                                                      padx=3)
             self.vars[cle] = variable
-        self.bouton_demarrer = ttk.Button(cadre, text="▶ Démarrer", command=self.demarrer)
+        self.bouton_demarrer = ttk.Button(cadre, text="▶ Démarrer", command=self.demarrer,
+                                          style="Accent.TButton")
         self.bouton_demarrer.grid(row=1, column=len(champs), padx=6)
         self.bouton_arreter = ttk.Button(cadre, text="■ Arrêter", command=self.arreter,
                                          state="disabled")
         self.bouton_arreter.grid(row=1, column=len(champs) + 1)
-        self.voyant = tk.Label(cadre, text="●", fg=GRIS, font=("TkDefaultFont", 16))
+        self.voyant = tk.Label(cadre, text="●", fg=c("doux"), font=("TkDefaultFont", 16))
         self.voyant.grid(row=0, column=len(champs) + 2, rowspan=2, padx=8)
+        self.bouton_theme = ttk.Button(cadre, style="Outil.TButton",
+                                       command=self.theme.basculer)
+        self.bouton_theme.grid(row=1, column=len(champs) + 3, padx=(4, 0))
+        self.racine.bind("<Control-d>", lambda e: self.theme.basculer())
 
     def _arbre(self, parent, colonnes):
         cadre = ttk.Frame(parent)
@@ -75,7 +81,7 @@ class ApplicationServeur:
         for cle, titre, largeur in colonnes:
             arbre.heading(cle, text=titre)
             arbre.column(cle, width=largeur)
-        arbre.tag_configure("en_ligne", foreground=VERT)
+        arbre.tag_configure("en_ligne", foreground=c("succes"))
         defil = ttk.Scrollbar(cadre, command=arbre.yview)
         arbre.configure(yscrollcommand=defil.set)
         arbre.pack(side="left", fill="both", expand=True)
@@ -93,8 +99,6 @@ class ApplicationServeur:
         self.texte_journal = scrolledtext.ScrolledText(journal, state="disabled", height=10,
                                                        font=("TkFixedFont", 9))
         self.texte_journal.pack(fill="both", expand=True)
-        for niveau, couleur in (("info", "black"), ("warning", ORANGE), ("error", ROUGE)):
-            self.texte_journal.tag_configure(niveau, foreground=couleur)
         boutons = ttk.Frame(journal)
         boutons.pack(fill="x", pady=4)
         ttk.Button(boutons, text="Effacer", command=self.effacer_journal).pack(side="left")
@@ -139,9 +143,22 @@ class ApplicationServeur:
         for ligne, (cle, libelle) in enumerate(libelles):
             ttk.Label(stats, text=libelle + " :").grid(row=ligne, column=0, sticky="e",
                                                        padx=6, pady=3)
-            etiquette = ttk.Label(stats, text="-", font=("TkDefaultFont", 11, "bold"))
+            etiquette = ttk.Label(stats, text="-", style="Gras.TLabel")
             etiquette.grid(row=ligne, column=1, sticky="w")
             self.etiquettes_stats[cle] = etiquette
+
+    def _theme_change(self):
+        """Recolore ce qui ne dépend pas des styles ttk (tags, voyant, bouton)."""
+        self.bouton_theme.configure(text="☀ Clair" if self.theme.sombre else "🌙 Sombre")
+        for niveau, couleur in (("info", "texte"), ("warning", "avertissement"),
+                                ("error", "erreur")):
+            self.texte_journal.tag_configure(niveau, foreground=c(couleur))
+        for arbre in (self.arbre_utilisateurs, self.arbre_sessions, self.arbre_groupes):
+            arbre.tag_configure("en_ligne", foreground=c("succes"))
+        if not self.serveur:
+            self.voyant.configure(fg=c("doux"))
+        else:
+            self.voyant.configure(fg=c("succes") if self.serveur.connecte else c("erreur"))
 
     # ------------------------------------------------------------------
     # Pont threads du serveur -> thread Tkinter
@@ -158,7 +175,7 @@ class ApplicationServeur:
                 if type_evt == "log":
                     self.journaliser(donnees["message"], donnees["niveau"])
                 elif type_evt == "etat":
-                    self.voyant.configure(fg=VERT if donnees["connecte"] else ROUGE)
+                    self.voyant.configure(fg=c("succes") if donnees["connecte"] else c("erreur"))
                     self.barre.configure(text="Connecté au broker." if donnees["connecte"]
                                          else "Déconnecté du broker.")
                 else:
@@ -270,7 +287,7 @@ class ApplicationServeur:
         if self.serveur:
             self.serveur.arreter()
         self._activer(False)
-        self.voyant.configure(fg=GRIS)
+        self.voyant.configure(fg=c("doux"))
         self.barre.configure(text="Serveur arrêté.")
 
     def expulser(self):
