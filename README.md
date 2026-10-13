@@ -1,8 +1,11 @@
 # Messagerie "mail like" sur MQTT (Mosquitto) - R309
 
 ## Installation
+La bibliothèque `paho-mqtt` est fournie dans le dossier `paho/` : rien à installer
+côté Python, il suffit de lancer les programmes depuis le dossier du projet.
+Il faut seulement un broker Mosquitto et Tkinter :
+
     sudo apt install mosquitto mosquitto-clients python3-tk
-    pip install -r requirements.txt
 
 ## Lancement
     ./lancer_broker.sh              # broker simple (anonyme)
