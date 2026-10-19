@@ -25,7 +25,7 @@ class ApplicationServeur:
 
     def __init__(self, racine, **defauts):
         self.racine = racine
-        self.racine.title("Serveur de messagerie MQTT")
+        self.racine.title("Serveur de messagerie R309")
         self.racine.geometry("1050x640")
         self.racine.minsize(800, 480)
         self.racine.protocol("WM_DELETE_WINDOW", self.quitter)
@@ -52,7 +52,9 @@ class ApplicationServeur:
         cadre = ttk.LabelFrame(self.racine, text="Configuration", padding=8)
         cadre.pack(fill="x", padx=8, pady=6)
         self.vars = {}
-        champs = [("hote", "Broker", 16), ("port", "Port", 6), ("domaine", "Domaine", 14),
+        # Broker vide = pas de MQTT ; Port TCP vide = pas de protocole TCP v1.4
+        champs = [("port_tcp", "Port TCP v1.4", 7), ("hote", "Broker MQTT", 14),
+                  ("port", "Port", 6), ("domaine", "Domaine", 12),
                   ("identifiant", "Login MQTT", 10), ("mot_de_passe", "Mot de passe", 10),
                   ("donnees", "Données", 12)]
         for colonne, (cle, libelle, largeur) in enumerate(champs):
@@ -118,7 +120,8 @@ class ApplicationServeur:
         sessions = ttk.Frame(onglets, padding=4)
         onglets.add(sessions, text="  Sessions  ")
         self.arbre_sessions = self._arbre(sessions, [
-            ("client_id", "Client-id MQTT", 160), ("utilisateur", "Utilisateur", 120),
+            ("canal", "Canal", 60), ("client_id", "Identifiant", 170),
+            ("utilisateur", "Utilisateur", 120),
             ("ip", "IP", 120), ("debut", "Connecté depuis", 140),
             ("activite", "Dernière activité", 140)])
         ttk.Button(sessions, text="Fermer la session sélectionnée",
@@ -158,7 +161,8 @@ class ApplicationServeur:
         if not self.serveur:
             self.voyant.configure(fg=c("doux"))
         else:
-            self.voyant.configure(fg=c("succes") if self.serveur.connecte else c("erreur"))
+            en_ligne = self.serveur.connecte or (self.serveur.tcp and not self.serveur.hote)
+            self.voyant.configure(fg=c("succes") if en_ligne else c("erreur"))
 
     # ------------------------------------------------------------------
     # Pont threads du serveur -> thread Tkinter
@@ -176,8 +180,15 @@ class ApplicationServeur:
                     self.journaliser(donnees["message"], donnees["niveau"])
                 elif type_evt == "etat":
                     self.voyant.configure(fg=c("succes") if donnees["connecte"] else c("erreur"))
-                    self.barre.configure(text="Connecté au broker." if donnees["connecte"]
-                                         else "Déconnecté du broker.")
+                    if self.serveur and not self.serveur.hote:
+                        texte = f"Serveur en ligne (TCP v1.4, port {self.serveur.port_tcp})."
+                    elif donnees["connecte"]:
+                        texte = "Connecté au broker MQTT" + (
+                            f" - TCP v1.4 sur le port {self.serveur.port_tcp}."
+                            if self.serveur and self.serveur.port_tcp else ".")
+                    else:
+                        texte = "Déconnecté du broker MQTT."
+                    self.barre.configure(text=texte)
                 else:
                     rafraichir = True
         except queue.Empty:
@@ -243,7 +254,7 @@ class ApplicationServeur:
         self.arbre_sessions.delete(*self.arbre_sessions.get_children())
         for session in s.liste_sessions():
             self.arbre_sessions.insert("", "end", iid=session.client_id, values=(
-                session.client_id, session.utilisateur, session.ip,
+                session.canal.upper(), session.client_id, session.utilisateur, session.ip,
                 P.date_lisible(session.debut, True),
                 P.date_lisible(session.derniere_activite, True)))
         for iid in selection:
@@ -268,7 +279,8 @@ class ApplicationServeur:
             self.serveur = ServeurMessagerie(
                 valeurs["domaine"].lower(), valeurs["hote"], int(valeurs["port"]),
                 valeurs["identifiant"] or None, valeurs["mot_de_passe"] or None,
-                valeurs["donnees"] or "donnees")
+                valeurs["donnees"] or "donnees",
+                int(valeurs["port_tcp"]) if valeurs["port_tcp"] else None)
         except ValueError as exc:
             messagebox.showerror("Configuration", str(exc))
             return
@@ -276,11 +288,12 @@ class ApplicationServeur:
         try:
             self.serveur.demarrer()
         except OSError as exc:
-            messagebox.showerror("Broker", f"Impossible de joindre le broker : {exc}")
+            messagebox.showerror("Démarrage", f"Impossible de démarrer le serveur : {exc}\n"
+                                 "(le port TCP est peut-être déjà utilisé)")
             self.serveur = None
             return
         self._activer(True)
-        self.racine.title(f"Serveur de messagerie MQTT - {self.serveur.domaine}")
+        self.racine.title(f"Serveur de messagerie R309 - {self.serveur.domaine}")
         self.rafraichir_tables()
 
     def arreter(self):
@@ -310,4 +323,4 @@ def main(**defauts):
 
 
 if __name__ == "__main__":
-    main(hote="localhost", port=1883, domaine="rt.iut", donnees="donnees")
+    main(hote="localhost", port=1883, domaine="rt.iut", donnees="donnees", port_tcp=5000)

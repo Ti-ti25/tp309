@@ -28,10 +28,14 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from . import protocole as P
 from .client_core import ClientMessagerie, charger_piece_jointe, sonder_broker
+from .client_tcp import ClientTCP, sonder_serveur_tcp
 from .export import exporter_json, exporter_texte
 from .theme import GestionnaireTheme, c
 
 FICHIER_PREFERENCES = os.path.join(os.path.expanduser("~"), ".messagerie_mqtt.json")
+
+# Protocoles proposés à la connexion : libellé -> (code, port par défaut)
+PROTOCOLES = {"TCP R309 v1.4 (commun)": ("tcp", 5000), "MQTT (broker)": ("mqtt", 1883)}
 
 
 # ======================================================================
@@ -228,7 +232,10 @@ class FenetreRedaction(tk.Toplevel):
         self.liste_pj.pack(side="left", fill="x", expand=True)
         boutons_pj = ttk.Frame(pj_cadre)
         boutons_pj.pack(side="right", padx=4)
-        ttk.Button(boutons_pj, text="Joindre…", command=self.joindre).pack(fill="x")
+        bouton_joindre = ttk.Button(boutons_pj, text="Joindre…", command=self.joindre)
+        bouton_joindre.pack(fill="x")
+        if getattr(app.client, "capacites", {}).get("pj") is False:
+            bouton_joindre.configure(state="disabled")      # protocole TCP v1.4
         ttk.Button(boutons_pj, text="Retirer", command=self.retirer).pack(fill="x", pady=2)
         self.rafraichir_pj()
 
@@ -325,7 +332,7 @@ class ApplicationClient:
 
     def __init__(self, racine):
         self.racine = racine
-        self.racine.title("Messagerie MQTT")
+        self.racine.title("Messagerie R309")
         self.racine.geometry("1200x720")
         self.racine.minsize(820, 520)
         self.racine.protocol("WM_DELETE_WINDOW", self.quitter)
@@ -390,7 +397,8 @@ class ApplicationClient:
             with open(FICHIER_PREFERENCES, encoding="utf-8") as fichier:
                 return json.load(fichier)
         except (OSError, ValueError):
-            return {"hote": "localhost", "port": 1883, "domaine": "rt.iut", "utilisateur": ""}
+            return {"hote": "localhost", "port": 5000, "domaine": "rt.iut", "utilisateur": "",
+                    "protocole": "tcp"}
 
     def _sauver_preferences(self):
         try:
@@ -406,7 +414,7 @@ class ApplicationClient:
         if self.cadre:
             self.cadre.destroy()
         self.racine.config(menu="")
-        self.racine.title("Messagerie MQTT - connexion")
+        self.racine.title("Messagerie R309 - connexion")
         self.cadre = ttk.Frame(self.racine)
         self.cadre.pack(fill="both", expand=True)
         self.bouton_theme_connexion = ttk.Button(self.cadre, style="Outil.TButton",
@@ -414,14 +422,26 @@ class ApplicationClient:
         self.bouton_theme_connexion.pack(anchor="ne", padx=10, pady=10)
         carte = ttk.Frame(self.cadre, style="Carte.TFrame", padding=(40, 30))
         carte.place(relx=0.5, rely=0.5, anchor="center")
-        ttk.Label(carte, text="✉  Messagerie MQTT", style="CarteTitre.TLabel").grid(
+        ttk.Label(carte, text="✉  Messagerie R309", style="CarteTitre.TLabel").grid(
             row=0, column=0, columnspan=3)
         ttk.Label(carte, text="R309 - Programmation événementielle",
                   style="CarteDoux.TLabel").grid(row=1, column=0, columnspan=3, pady=(2, 22))
         self.vars_connexion = {}
-        champs = [("hote", "Broker MQTT"), ("port", "Port"), ("domaine", "Domaine"),
+        # Choix du protocole : TCP v1.4 (commun à la promo) ou MQTT
+        code = self.preferences.get("protocole")
+        if code is None:                       # anciennes préférences (MQTT seulement)
+            code, self.preferences["port"] = "tcp", 5000
+        libelle_proto = next(l for l, (c_, _) in PROTOCOLES.items() if c_ == code)
+        self.var_protocole = tk.StringVar(value=libelle_proto)
+        ttk.Label(carte, text="Protocole", style="Carte.TLabel").grid(
+            row=2, column=0, sticky="w", padx=(0, 14), pady=5)
+        choix = ttk.Combobox(carte, textvariable=self.var_protocole, state="readonly",
+                             values=list(PROTOCOLES), width=28)
+        choix.grid(row=2, column=1, columnspan=2, sticky="ew", pady=4)
+        choix.bind("<<ComboboxSelected>>", self._protocole_change)
+        champs = [("hote", "Serveur / broker"), ("port", "Port"), ("domaine", "Domaine"),
                   ("utilisateur", "Utilisateur"), ("mot_de_passe", "Mot de passe")]
-        for ligne, (cle, libelle) in enumerate(champs, 2):
+        for ligne, (cle, libelle) in enumerate(champs, 3):
             ttk.Label(carte, text=libelle, style="Carte.TLabel").grid(
                 row=ligne, column=0, sticky="w", padx=(0, 14), pady=5)
             variable = tk.StringVar(value=str(self.preferences.get(cle, "")))
@@ -433,18 +453,24 @@ class ApplicationClient:
             if cle == ("mot_de_passe" if self.preferences.get("utilisateur") else "utilisateur"):
                 champ.focus_set()
         boutons = ttk.Frame(carte, style="Lecture.TFrame")
-        boutons.grid(row=8, column=0, columnspan=3, pady=(20, 10))
+        boutons.grid(row=9, column=0, columnspan=3, pady=(20, 10))
         self.boutons_connexion = [
             ttk.Button(boutons, text="Se connecter", command=self.se_connecter,
                        style="Accent.TButton"),
             ttk.Button(boutons, text="Créer un compte…", command=self.creer_compte),
-            ttk.Button(boutons, text="Tester le broker", command=self.tester_broker)]
+            ttk.Button(boutons, text="Tester la connexion", command=self.tester_broker)]
         for bouton in self.boutons_connexion:
             bouton.pack(side="left", padx=4)
         self.etat_connexion = ttk.Label(carte, text="", style="CarteDoux.TLabel",
                                         wraplength=380, justify="center")
-        self.etat_connexion.grid(row=9, column=0, columnspan=3)
+        self.etat_connexion.grid(row=10, column=0, columnspan=3)
         self._theme_change()
+
+    def _protocole_change(self, _evt=None):
+        """Callback de la liste déroulante : propose le port par défaut du protocole."""
+        _, port = PROTOCOLES[self.var_protocole.get()]
+        if self.vars_connexion["port"].get().strip() in ("", "1883", "5000"):
+            self.vars_connexion["port"].set(str(port))
 
     def _parametres(self):
         valeurs = {cle: var.get().strip() for cle, var in self.vars_connexion.items()}
@@ -456,6 +482,7 @@ class ApplicationClient:
         if not P.domaine_valide(valeurs["domaine"]):
             raise ValueError("domaine invalide")
         valeurs["utilisateur"] = valeurs["utilisateur"].lower()
+        valeurs["protocole"] = PROTOCOLES[self.var_protocole.get()][0]
         return valeurs
 
     def _activer_connexion(self, actif, message="", couleur=None):
@@ -470,10 +497,11 @@ class ApplicationClient:
         except ValueError as exc:
             self._activer_connexion(True, str(exc), c("erreur"))
             return
-        self._activer_connexion(False, "Test du broker en cours…")
+        self._activer_connexion(False, "Test de la connexion en cours…")
+        sonde = sonder_serveur_tcp if valeurs["protocole"] == "tcp" else sonder_broker
 
         def travail():
-            ok, message, latence = sonder_broker(valeurs["hote"], valeurs["port"])
+            ok, message, latence = sonde(valeurs["hote"], valeurs["port"])
             if latence is not None:
                 message += f" ({latence:.1f} ms)"
             self.pont.appeler(self._activer_connexion, True, message, c("succes") if ok else c("erreur"))
@@ -481,18 +509,24 @@ class ApplicationClient:
         threading.Thread(target=travail, daemon=True).start()
 
     def _ouvrir_client(self, valeurs, suite):
-        """Connexion MQTT (bloquante) dans un thread, puis suite() dans le thread Tkinter."""
-        self._activer_connexion(False, f"Connexion au broker {valeurs['hote']}:"
-                                       f"{valeurs['port']}…")
+        """Connexion (bloquante) dans un thread, puis suite() dans le thread Tkinter."""
+        tcp = valeurs["protocole"] == "tcp"
+        self._activer_connexion(False, f"Connexion à {valeurs['hote']}:{valeurs['port']} "
+                                       f"({'TCP v1.4' if tcp else 'MQTT'})…")
 
         def travail():
-            client = ClientMessagerie(valeurs["hote"], valeurs["port"], valeurs["domaine"])
+            # Même interface pour les deux clients : le reste de l'IHM ne change pas.
+            classe = ClientTCP if tcp else ClientMessagerie
+            client = classe(valeurs["hote"], valeurs["port"], valeurs["domaine"])
             try:
                 client.connecter()
             except OSError as exc:
-                message = f"Broker injoignable : {exc}"
+                message = f"{'Serveur' if tcp else 'Broker'} injoignable : {exc}"
                 if isinstance(exc, ConnectionRefusedError):
-                    message += ("\nAucun broker n'écoute sur ce port : lancez "
+                    message += ("\nAucun serveur n'écoute sur ce port : lancez "
+                                "python3 serveur.py, ou indiquez l'adresse IP du serveur."
+                                if tcp else
+                                "\nAucun broker n'écoute sur ce port : lancez "
                                 "./lancer_broker.sh (ou python3 broker.py), ou indiquez "
                                 "l'adresse IP de la machine qui fait tourner le broker.")
                 self.pont.appeler(self._activer_connexion, True, message, c("erreur"))
@@ -532,7 +566,7 @@ class ApplicationClient:
             self.client = None
             return
         self.preferences.update({k: valeurs[k] for k in ("hote", "port", "domaine",
-                                                         "utilisateur")})
+                                                         "utilisateur", "protocole")})
         self._sauver_preferences()
         self.non_lus = rep["data"].get("unread", 0)
         self.afficher_principal()
@@ -569,7 +603,7 @@ class ApplicationClient:
     # ==================================================================
     def afficher_principal(self):
         self.cadre.destroy()
-        self.racine.title(f"Messagerie MQTT - {self.client.adresse}")
+        self.racine.title(f"Messagerie R309 - {self.client.adresse}")
         self._creer_menu()
         self.cadre = ttk.Frame(self.racine)
         self.cadre.pack(fill="both", expand=True)
@@ -582,6 +616,10 @@ class ApplicationClient:
         self._creer_barre_etat()
         self._raccourcis()
         self._theme_change()
+        capacites = getattr(self.client, "capacites", {})
+        if capacites.get("groupes") is False:
+            # pas de listes de diffusion dans le protocole TCP v1.4
+            self.onglets.tab(2, state="disabled")
 
         self.actualiser()
         self.charger_contacts()
@@ -637,7 +675,7 @@ class ApplicationClient:
                                        command=self.theme.basculer)
         self.bouton_theme.pack(side="right", padx=(8, 0))
         self.var_recherche = tk.StringVar()
-        recherche = ttk.Entry(barre, textvariable=self.var_recherche, width=16)
+        recherche = ttk.Entry(barre, textvariable=self.var_recherche, width=12)
         recherche.pack(side="right", padx=4)
         ttk.Label(barre, text="🔍").pack(side="right")
         # Filtrage instantané : chaque frappe déclenche le callback.
@@ -806,7 +844,7 @@ class ApplicationClient:
             self.liste_dossiers.insert("end", libelle)
         if selection:
             self.liste_dossiers.selection_set(selection[0])
-        titre = f"Messagerie MQTT - {self.client.adresse}"
+        titre = f"Messagerie R309 - {self.client.adresse}"
         self.racine.title(f"({self.non_lus}) {titre}" if self.non_lus else titre)
 
     def sur_choix_dossier(self, _evt=None):
@@ -1007,7 +1045,9 @@ class ApplicationClient:
         entete = self.entete_selectionne()
         if entete is None:
             return
-        if self.dossier == P.DOSSIER_CORBEILLE and not messagebox.askyesno(
+        definitif = (self.dossier == P.DOSSIER_CORBEILLE or
+                     getattr(self.client, "capacites", {}).get("corbeille") is False)
+        if definitif and not messagebox.askyesno(
                 "Supprimer", "Supprimer définitivement ce message ?", parent=self.racine):
             return
 
@@ -1388,11 +1428,14 @@ class ApplicationClient:
     def a_propos(self):
         messagebox.showinfo(
             "À propos",
-            "Messagerie MQTT - R309 Programmation événementielle\n\n"
-            f"Broker : {self.client.hote}:{self.client.port}\n"
-            f"Client-id MQTT : {self.client.client_id}\n"
-            f"Adresse : {self.client.adresse}\n"
-            f"Protocole applicatif : v{P.VERSION} (voir PROTOCOLE.md)", parent=self.racine)
+            "Messagerie R309 - Programmation événementielle\n\n"
+            + (f"Protocole : TCP R309 v1.4 (voir PROTOCOLE_TCP.md)\n"
+               f"Serveur : {self.client.hote}:{self.client.port}\n"
+               if getattr(self.client, "protocole", "mqtt") == "tcp" else
+               f"Protocole : MQTT, applicatif v{P.VERSION}\n"
+               f"Broker : {self.client.hote}:{self.client.port}\n")
+            + f"Identifiant de connexion : {self.client.client_id}\n"
+              f"Adresse : {self.client.adresse}", parent=self.racine)
 
     def retour_connexion(self):
         if self.client:

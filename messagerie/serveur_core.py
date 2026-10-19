@@ -52,10 +52,16 @@ class ErreurRequete(Exception):
 
 
 class Session:
-    """Une session = un client MQTT authentifié (un même utilisateur peut en avoir plusieurs)."""
+    """
+    Une session = un client authentifié (un même utilisateur peut en avoir
+    plusieurs). canal = "mqtt" (client MQTT) ou "tcp" (protocole TCP v1.4,
+    connexion = l'objet ConnexionTCP qui gère le socket).
+    """
 
-    def __init__(self, client_id, utilisateur, ip):
+    def __init__(self, client_id, utilisateur, ip, canal="mqtt", connexion=None):
         self.client_id = client_id
+        self.canal = canal
+        self.connexion = connexion
         self.utilisateur = utilisateur
         self.jeton = P.nouvel_id()
         self.ip = ip
@@ -103,6 +109,8 @@ class ServeurSortant:
         # Copie dans les "Éléments envoyés" de l'expéditeur.
         copie = self.stockage.deposer(expediteur, mail, P.DOSSIER_ENVOYES, lu=True)
         self.serveur.stats["mails_envoyes"] += 1
+        # Protocole TCP v1.4 : le mail est aussi "poussé" à l'expéditeur.
+        self.serveur.pousser_tcp(expediteur, copie)
         self.serveur.log(f"{mail['from']} envoie « {objet} » à {', '.join(a + cc)}")
 
         livres, relayes, echecs = self.router(mail, a + cc)
@@ -183,6 +191,7 @@ class ServeurSortant:
     def _deposer_et_notifier(self, nom, mail):
         copie = self.stockage.deposer(nom, mail, P.DOSSIER_RECEPTION)
         self.serveur.stats["mails_livres"] += 1
+        self.serveur.pousser_tcp(nom, copie)          # sessions TCP v1.4
         # Notification "push" de toutes les sessions ouvertes du destinataire.
         self.serveur.notifier(nom, P.evenement(P.EVT_NEW_MAIL, {
             "mail": ServeurEntrant.entete(copie),
@@ -354,10 +363,14 @@ class ServeurEntrant:
 # Serveur complet
 # ======================================================================
 class ServeurMessagerie:
-    """Serveur de messagerie d'un domaine, connecté à un broker MQTT."""
+    """
+    Serveur de messagerie d'un domaine. Il est joignable de deux façons :
+      * via un broker MQTT (hote/port), si hote est renseigné ;
+      * en TCP direct avec le protocole commun v1.4 (port_tcp), si port_tcp est renseigné.
+    """
 
     def __init__(self, domaine="rt.iut", hote="localhost", port=1883,
-                 identifiant=None, mot_de_passe=None, repertoire="donnees"):
+                 identifiant=None, mot_de_passe=None, repertoire="donnees", port_tcp=None):
         if not P.domaine_valide(domaine):
             raise ValueError(f"nom de domaine invalide : {domaine!r}")
         self.domaine = domaine
@@ -380,6 +393,9 @@ class ServeurMessagerie:
         self._minuterie = None
         self._actif = False
         self.mqtt = None
+        self.port_tcp = int(port_tcp) if port_tcp else None
+        self.tcp = None                        # ServeurTCP (protocole v1.4)
+        self._echec_mqtt_signale = False
 
         # Table de dispatch : type de requête -> méthode de traitement.
         self._traitements = {
@@ -429,9 +445,33 @@ class ServeurMessagerie:
     # Démarrage / arrêt
     # ------------------------------------------------------------------
     def demarrer(self):
-        """Connexion au broker et lancement des threads. Lève OSError si le broker est injoignable."""
+        """
+        Lance le thread de traitement, le serveur TCP (port_tcp) et la
+        connexion au broker MQTT (hote). Lève OSError si le port TCP est déjà pris.
+        Un broker injoignable n'empêche pas le démarrage : paho réessaie tout seul.
+        """
         self._actif = True
         self.demarre_le = P.maintenant()
+        self._thread_traitement = threading.Thread(target=self._boucle_traitement,
+                                                   name="traitement", daemon=True)
+        self._thread_traitement.start()
+        if self.port_tcp:
+            from .serveur_tcp import ServeurTCP      # (serveur_tcp importe ce module)
+            self.tcp = ServeurTCP(self, self.port_tcp)
+            try:
+                self.tcp.demarrer()
+            except OSError:
+                self._actif = False
+                self._file.put(None)
+                raise
+            self.log(f"protocole TCP v1.4 : écoute sur le port {self.port_tcp}")
+        if self.hote:
+            self._demarrer_mqtt()
+        self._armer_minuterie()
+        if self.port_tcp and not self.hote:
+            self._signaler("etat", connecte=True)
+
+    def _demarrer_mqtt(self):
         # clean_session=False : le broker conserve nos abonnements et met en
         # file d'attente les messages QoS 1 (relais inter-domaines notamment)
         # reçus pendant une coupure du serveur.
@@ -447,20 +487,20 @@ class ServeurMessagerie:
         self.mqtt.on_connect = self._on_connect
         self.mqtt.on_disconnect = self._on_disconnect
         self.mqtt.on_message = self._on_message
+        self.mqtt.on_connect_fail = self._on_connect_fail
         self.mqtt.reconnect_delay_set(1, 10)
-
-        self._thread_traitement = threading.Thread(target=self._boucle_traitement,
-                                                   name="traitement", daemon=True)
-        self._thread_traitement.start()
-        self.log(f"connexion au broker {self.hote}:{self.port}...")
-        try:
-            self.mqtt.connect(self.hote, self.port, keepalive=30)
-        except OSError:
-            self._actif = False
-            self._file.put(None)
-            raise
+        self.log(f"connexion au broker MQTT {self.hote}:{self.port}...")
+        # connect_async : la connexion (et les reconnexions) se font dans le
+        # thread réseau de paho, sans bloquer ni lever d'exception ici.
+        self.mqtt.connect_async(self.hote, self.port, keepalive=30)
         self.mqtt.loop_start()               # lance le thread réseau de paho
-        self._armer_minuterie()
+
+    def _on_connect_fail(self, client, userdata):
+        if not self._echec_mqtt_signale:      # un seul message, paho réessaie en boucle
+            self._echec_mqtt_signale = True
+            mode = " (le protocole TCP reste disponible)" if self.tcp else ""
+            self.log(f"broker MQTT {self.hote}:{self.port} injoignable, nouvel essai en "
+                     f"arrière-plan{mode}", "warning")
 
     def arreter(self):
         """Arrêt propre : les utilisateurs passent hors ligne, le statut aussi."""
@@ -472,9 +512,15 @@ class ServeurMessagerie:
         with self.verrou_sessions:
             utilisateurs = {s.utilisateur for s in self.sessions.values()}
             for session in list(self.sessions.values()):
-                self.publier(P.topic_evenement(self.domaine, session.client_id),
-                             P.evenement(P.EVT_SESSION_CLOSED, {"reason": "arrêt du serveur"}))
+                if session.canal == "tcp":
+                    session.connexion.fermer()
+                else:
+                    self.publier(P.topic_evenement(self.domaine, session.client_id),
+                                 P.evenement(P.EVT_SESSION_CLOSED,
+                                             {"reason": "arrêt du serveur"}))
             self.sessions.clear()
+        if self.tcp:
+            self.tcp.arreter()
         for utilisateur in utilisateurs:
             self.publier_presence(utilisateur)
         info = self.publier(P.topic_statut_serveur(self.domaine),
@@ -483,8 +529,9 @@ class ServeurMessagerie:
         if info is not None and self.connecte:
             info.wait_for_publish(2)
         self._file.put(None)                 # réveille et arrête le thread de traitement
-        self.mqtt.disconnect()
-        self.mqtt.loop_stop()
+        if self.mqtt is not None:
+            self.mqtt.disconnect()
+            self.mqtt.loop_stop()
         self.connecte = False
         self.log("serveur arrêté")
         self._signaler("etat", connecte=False)
@@ -498,6 +545,7 @@ class ServeurMessagerie:
             self.log(f"connexion refusée par le broker : {reason_code}", "error")
             return
         self.connecte = True
+        self._echec_mqtt_signale = False
         client.subscribe([(P.topic_requetes_serveur(self.domaine), 1),
                           (P.topic_deconnexions_serveur(self.domaine), 1),
                           (P.topic_relais(self.domaine), 1)])
@@ -529,9 +577,13 @@ class ServeurMessagerie:
             element = self._file.get()
             if element is None:
                 break
-            topic, contenu = element
             try:
-                self._traiter(topic, contenu)
+                # Deux sortes d'éléments : (topic, contenu) reçus de MQTT, ou une
+                # fonction préparée par le serveur TCP (commande v1.4 à exécuter).
+                if callable(element):
+                    element()
+                else:
+                    self._traiter(*element)
             except Exception as exc:
                 self.stats["erreurs"] += 1
                 journal.exception("erreur de traitement")
@@ -592,16 +644,29 @@ class ServeurMessagerie:
             return None
         return self.mqtt.publish(topic, P.encoder(message), qos=1, retain=retenu)
 
+    def executer(self, fonction):
+        """Fait exécuter fonction() par le thread de traitement (appelable de tout thread)."""
+        self._file.put(fonction)
+
     def notifier(self, utilisateur, evt):
-        """Pousse un événement vers toutes les sessions ouvertes d'un utilisateur."""
+        """Pousse un événement vers toutes les sessions MQTT ouvertes d'un utilisateur."""
         with self.verrou_sessions:
-            cibles = [s.client_id for s in self.sessions.values() if s.utilisateur == utilisateur]
+            cibles = [s.client_id for s in self.sessions.values()
+                      if s.utilisateur == utilisateur and s.canal == "mqtt"]
         for client_id in cibles:
             self.publier(P.topic_evenement(self.domaine, client_id), evt)
 
+    def pousser_tcp(self, utilisateur, mail):
+        """Pousse un mail ("type": "mail") vers les sessions TCP v1.4 d'un utilisateur."""
+        if self.tcp is None:
+            return
+        for session in self.sessions_de(utilisateur):
+            if session.canal == "tcp":
+                session.connexion.envoyer({"type": "mail", "mail": self.tcp.mail_v14(mail)})
+
     def notifier_tous(self, evt):
         with self.verrou_sessions:
-            cibles = list(self.sessions)
+            cibles = [cid for cid, s in self.sessions.items() if s.canal == "mqtt"]
         for client_id in cibles:
             self.publier(P.topic_evenement(self.domaine, client_id), evt)
 
@@ -642,6 +707,8 @@ class ServeurMessagerie:
             session = self.sessions.pop(client_id, None)
         if session is None:
             return
+        if session.canal == "tcp":
+            session.connexion.fermer()
         self.stockage.noter_connexion(session.utilisateur, session.ip)
         self.publier_presence(session.utilisateur)
         self.log(f"{session.utilisateur} déconnecté ({raison})")
@@ -671,7 +738,9 @@ class ServeurMessagerie:
     def _verifier_sessions(self):
         limite = P.maintenant() - P.EXPIRATION_SESSION
         with self.verrou_sessions:
-            expirees = [cid for cid, s in self.sessions.items() if s.derniere_activite < limite]
+            # (une session TCP vit tant que son socket est ouvert : pas d'expiration)
+            expirees = [cid for cid, s in self.sessions.items()
+                        if s.canal == "mqtt" and s.derniere_activite < limite]
         for client_id in expirees:
             self.fermer_session(client_id, "session expirée")
         self._signaler("stats")
@@ -809,23 +878,10 @@ class ServeurMessagerie:
         return {}
 
 
-def main():
-    """Lancement du serveur en mode console (sans IHM)."""
-    import argparse
+def lancer_console(serveur):
+    """Fait tourner un serveur sans IHM jusqu'à Ctrl+C."""
     import signal
 
-    parser = argparse.ArgumentParser(description="Serveur de messagerie MQTT (mode console)")
-    parser.add_argument("--domaine", default="rt.iut")
-    parser.add_argument("--hote", default="localhost", help="adresse du broker Mosquitto")
-    parser.add_argument("--port", type=int, default=1883)
-    parser.add_argument("--utilisateur", help="identifiant MQTT du serveur (si ACL)")
-    parser.add_argument("--mot-de-passe", help="mot de passe MQTT du serveur (si ACL)")
-    parser.add_argument("--donnees", default="donnees", help="répertoire de stockage")
-    args = parser.parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    serveur = ServeurMessagerie(args.domaine, args.hote, args.port, args.utilisateur,
-                                args.mot_de_passe, args.donnees)
     fin = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: fin.set())
     signal.signal(signal.SIGTERM, lambda *_: fin.set())
@@ -833,6 +889,26 @@ def main():
     while not fin.wait(0.5):     # attente interruptible par Ctrl+C
         pass
     serveur.arreter()
+
+
+def main():
+    """python3 -m messagerie.serveur_core : serveur en mode console (voir aussi serveur.py)."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Serveur de messagerie (mode console)")
+    parser.add_argument("--domaine", default="rt.iut")
+    parser.add_argument("--hote", default="localhost", help="adresse du broker MQTT")
+    parser.add_argument("--port", type=int, default=1883)
+    parser.add_argument("--port-tcp", type=int, default=5000, help="port du protocole TCP v1.4")
+    parser.add_argument("--sans-mqtt", action="store_true", help="TCP v1.4 uniquement")
+    parser.add_argument("--utilisateur", help="identifiant MQTT du serveur (si ACL)")
+    parser.add_argument("--mot-de-passe", help="mot de passe MQTT du serveur (si ACL)")
+    parser.add_argument("--donnees", default="donnees", help="répertoire de stockage")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    lancer_console(ServeurMessagerie(args.domaine, None if args.sans_mqtt else args.hote,
+                                     args.port, args.utilisateur, args.mot_de_passe,
+                                     args.donnees, args.port_tcp))
 
 
 if __name__ == "__main__":

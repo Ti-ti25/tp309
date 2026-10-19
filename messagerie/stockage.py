@@ -71,11 +71,12 @@ class Stockage:
         return hashlib.pbkdf2_hmac("sha256", mot_de_passe.encode("utf-8"),
                                    bytes.fromhex(sel), 100_000).hex()
 
-    def creer_utilisateur(self, nom_utilisateur, mot_de_passe, nom="", prenom=""):
+    def creer_utilisateur(self, nom_utilisateur, mot_de_passe, nom="", prenom="", alias="",
+                          email=""):
         with self.verrou:
             if not P.nom_valide(nom_utilisateur) or nom_utilisateur in P.NOMS_RESERVES:
                 raise ErreurStockage("nom d'utilisateur invalide "
-                                     "(2 à 32 caractères : a-z 0-9 . _ -)")
+                                     "(1 à 32 caractères : a-z 0-9 . _ -)")
             if nom_utilisateur in self._utilisateurs or nom_utilisateur in self._groupes:
                 raise ErreurStockage("ce nom est déjà utilisé")
             if len(mot_de_passe or "") < 4:
@@ -83,6 +84,7 @@ class Stockage:
             sel = os.urandom(16).hex()
             self._utilisateurs[nom_utilisateur] = {
                 "nom": nom.strip(), "prenom": prenom.strip(),
+                "alias": (alias or "").strip(), "email": (email or "").strip(),
                 "sel": sel, "hash": self._hacher(mot_de_passe, sel),
                 "cree_le": P.maintenant(), "derniere_connexion": None,
                 "derniere_ip": None,
@@ -131,6 +133,10 @@ class Stockage:
                 return None
             return {"username": nom_utilisateur, "nom": compte["nom"],
                     "prenom": compte["prenom"],
+                    # alias (défaut : prénom) et email (défaut : <user>@r309.fr),
+                    # comme le prévoit le protocole TCP v1.4
+                    "alias": compte.get("alias") or compte["prenom"],
+                    "email": compte.get("email") or f"{nom_utilisateur}@r309.fr",
                     "derniere_connexion": compte["derniere_connexion"],
                     "derniere_ip": compte["derniere_ip"]}
 

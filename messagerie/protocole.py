@@ -108,7 +108,9 @@ EXPIRATION_SESSION = 3 * PERIODE_PING
 
 # Expressions régulières de validation (les noms servent aussi dans les
 # topics MQTT : ils ne doivent donc contenir ni '/', ni '+', ni '#').
-_RE_NOM = re.compile(r"^[a-z0-9][a-z0-9._-]{1,31}$")
+# (1 à 32 caractères parmi a-z 0-9 _ . - : compatible avec le protocole TCP v1.4,
+#  qui accepte [A-Za-z0-9_.-]{1,32} ; les identifiants sont ramenés en minuscules)
+_RE_NOM = re.compile(r"^[a-z0-9_.-]{1,32}$")
 _RE_DOMAINE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
 
 

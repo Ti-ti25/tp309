@@ -1,32 +1,51 @@
-# Messagerie "mail like" sur MQTT (Mosquitto) - R309
+# Messagerie "mail like" - R309 Programmation événementielle
+
+Deux protocoles sont disponibles, avec les mêmes comptes et les mêmes boîtes aux lettres :
+
+| Protocole | Port | Broker ? | Pour quoi |
+|---|---|---|---|
+| **TCP R309 v1.4** (`PROTOCOLE_TCP.md`) | 5000 | non | protocole commun : interopérable avec les autres binômes |
+| **MQTT** (Mosquitto) | 1883 | oui | version événementielle complète (PJ, Cc, listes de diffusion, présence push) |
 
 ## Installation
-La bibliothèque `paho-mqtt` est fournie dans le dossier `paho/` : rien à installer
-côté Python, il suffit de lancer les programmes depuis le dossier du projet.
-Il faut seulement un broker Mosquitto et Tkinter :
+Rien à installer côté Python (la bibliothèque `paho-mqtt` est fournie dans `paho/`).
+Il faut Tkinter (`python3-tk`), et un broker MQTT seulement pour le mode MQTT.
 
-    sudo apt install mosquitto mosquitto-clients python3-tk
+## Lancement rapide (protocole TCP v1.4, sans broker)
+    python3 serveur.py                  # puis « Démarrer » : écoute TCP sur le port 5000
+    python3 client.py                   # protocole « TCP R309 v1.4 », port 5000
 
-## Lancement
-Il faut TOUJOURS un broker MQTT lancé avant le serveur et les clients
-(sinon : « Broker injoignable : Connection refused »).
+    python3 serveur.py --console --sans-mqtt      # serveur sans interface ni broker
+    python3 serveur.py adduser alice Martin Alice # création d'un compte en ligne de commande
 
-    ./lancer_broker.sh              # Mosquitto (ou, s'il est absent, le mini-broker Python)
-    python3 broker.py -v            # mini-broker Python de secours (sans installation)
-    ./lancer_broker.sh securise     # broker avec ACL (compte "serveur"/"serveur")
+Se connecter au serveur d'un autre binôme : mettre son adresse IP dans « Serveur / broker ».
 
-    python3 serveur.py              # serveur de messagerie (IHM Tkinter)
+## Mode MQTT
+    ./lancer_broker.sh                  # Mosquitto (ou, s'il est absent, le mini-broker Python)
+    python3 broker.py -v                # mini-broker Python de secours (sans installation)
+    ./lancer_broker.sh securise         # broker avec ACL (compte "serveur"/"serveur")
     python3 serveur.py --utilisateur serveur --mot-de-passe serveur   # si broker sécurisé
-    python3 client.py               # client de messagerie (IHM Tkinter)
+    python3 client.py                   # protocole « MQTT (broker) », port 1883
+
+Ce que le protocole v1.4 ne prévoit pas (pièces jointes, Cc, listes de diffusion,
+corbeille, profil) est désactivé dans le client en mode TCP.
+
+## Tests
+    python3 -m unittest tests.test_tcp -v           # protocole TCP v1.4 (aucun broker requis)
+    python3 -m unittest tests.test_integration -v   # MQTT (broker sécurisé requis)
 
 ## Fichiers
-- `messagerie/protocole.py`    : protocole (topics MQTT, format JSON des requêtes/réponses/événements)
-- `messagerie/stockage.py`     : persistance JSON (comptes, boîtes, contacts, listes, PJ)
-- `messagerie/serveur_core.py` : serveur (partie "SMTP" routage/relais + partie "IMAP" boîtes)
-- `messagerie/client_core.py`  : bibliothèque client (requêtes asynchrones, Timer, sonde TCP)
-- `messagerie/gui_serveur.py`  : IHM du serveur (journal, utilisateurs, sessions, listes, stats)
-- `messagerie/gui_client.py`   : IHM du client (mails, répondre/répondre à tous/transférer, PJ, contacts, listes, export)
-- `messagerie/export.py`       : export d'une discussion en TXT / JSON
-- `broker.py`                  : mini-broker MQTT 3.1.1 en Python (si Mosquitto absent)
-- `mosquitto/`                 : configurations Mosquitto + ACL
-- `tests/test_integration.py`  : tests d'intégration (broker réel requis)
+- `messagerie/protocole.py`     : protocole MQTT (topics, format JSON des requêtes/réponses/événements)
+- `messagerie/protocole_tcp.py` : protocole TCP v1.4 (lignes JSON, constantes, conversions)
+- `messagerie/stockage.py`      : persistance JSON (comptes, boîtes, contacts, listes, PJ)
+- `messagerie/serveur_core.py`  : serveur (partie "SMTP" routage/relais + partie "IMAP" boîtes)
+- `messagerie/serveur_tcp.py`   : écoute TCP v1.4 (sockets, un thread par client)
+- `messagerie/client_core.py`   : client MQTT (requêtes asynchrones, Timer, sonde TCP)
+- `messagerie/client_tcp.py`    : client TCP v1.4 (adaptateur : même interface que le client MQTT)
+- `messagerie/gui_serveur.py`   : IHM du serveur (journal, utilisateurs, sessions, listes, stats)
+- `messagerie/gui_client.py`    : IHM du client (mails, répondre/répondre à tous/transférer, PJ, contacts, listes, export)
+- `messagerie/theme.py`         : thèmes clair / sombre
+- `messagerie/export.py`        : export d'une discussion en TXT / JSON
+- `broker.py`                   : mini-broker MQTT 3.1.1 en Python (si Mosquitto absent)
+- `mosquitto/`                  : configurations Mosquitto + ACL
+- `tests/`                      : tests (dont un serveur de référence v1.4 indépendant)
