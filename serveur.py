@@ -3,6 +3,7 @@
 Lanceur du serveur de messagerie.
 
     python3 serveur.py                         # interface graphique (TCP v1.4 port 5000 + MQTT)
+                                               # (lance aussi un broker MQTT local si besoin)
     python3 serveur.py --console               # sans interface (terminal)
     python3 serveur.py --console --sans-mqtt   # protocole TCP v1.4 seul, sans broker
     python3 serveur.py --domaine geii.iut --hote 192.168.1.10 --demarrer
@@ -53,6 +54,8 @@ def main():
     parser.add_argument("--hote", default="localhost", help="adresse du broker MQTT")
     parser.add_argument("--port", type=int, default=1883, help="port du broker MQTT")
     parser.add_argument("--sans-mqtt", action="store_true", help="pas de broker MQTT")
+    parser.add_argument("--sans-broker", action="store_true",
+                        help="ne pas lancer automatiquement un broker local")
     parser.add_argument("--utilisateur", help="identifiant MQTT du serveur (broker avec ACL)")
     parser.add_argument("--mot-de-passe", help="mot de passe MQTT du serveur")
     parser.add_argument("--donnees", default="donnees", help="répertoire de stockage")
@@ -63,12 +66,14 @@ def main():
         from messagerie.serveur_core import ServeurMessagerie, lancer_console
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
         lancer_console(ServeurMessagerie(args.domaine, hote, args.port, args.utilisateur,
-                                         args.mot_de_passe, args.donnees, args.port_tcp))
+                                         args.mot_de_passe, args.donnees, args.port_tcp,
+                                         lancer_broker=not args.sans_broker))
     else:
         from messagerie import gui_serveur
         gui_serveur.main(hote=hote, port=args.port, domaine=args.domaine,
                          identifiant=args.utilisateur, mot_de_passe=args.mot_de_passe,
-                         donnees=args.donnees, port_tcp=args.port_tcp, demarrer=args.demarrer)
+                         donnees=args.donnees, port_tcp=args.port_tcp, demarrer=args.demarrer,
+                         lancer_broker=not args.sans_broker)
 
 
 if __name__ == "__main__":

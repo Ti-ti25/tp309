@@ -21,6 +21,14 @@ Il faut Tkinter (`python3-tk`), et un broker MQTT seulement pour le mode MQTT.
 Se connecter au serveur d'un autre binôme : mettre son adresse IP dans « Serveur / broker ».
 
 ## Mode MQTT
+Rien à lancer à part le serveur : au démarrage, `serveur.py` regarde si un broker
+écoute sur le port MQTT (1883) de la machine ; sinon il lance lui-même **Mosquitto**
+s'il est installé (y compris dans `/usr/sbin`), ou à défaut le **mini-broker Python**
+du projet. Il l'arrête à sa fermeture (un broker déjà lancé avant n'est pas touché).
+Option `--sans-broker`, ou case à décocher dans l'IHM, pour désactiver ce comportement.
+
+Lancement manuel du broker (facultatif) :
+
     ./lancer_broker.sh                  # Mosquitto (ou, s'il est absent, le mini-broker Python)
     python3 broker.py -v                # mini-broker Python de secours (sans installation)
     ./lancer_broker.sh securise         # broker avec ACL (compte "serveur"/"serveur")
@@ -46,6 +54,7 @@ corbeille, profil) est désactivé dans le client en mode TCP.
 - `messagerie/gui_client.py`    : IHM du client (mails, répondre/répondre à tous/transférer, PJ, contacts, listes, export)
 - `messagerie/theme.py`         : thèmes clair / sombre
 - `messagerie/export.py`        : export d'une discussion en TXT / JSON
-- `broker.py`                   : mini-broker MQTT 3.1.1 en Python (si Mosquitto absent)
+- `messagerie/mini_broker.py`   : mini-broker MQTT 3.1.1 en Python (si Mosquitto absent) ; `broker.py` le lance seul
+- `messagerie/lanceur_broker.py`: lancement automatique du broker par le serveur
 - `mosquitto/`                  : configurations Mosquitto + ACL
 - `tests/`                      : tests (dont un serveur de référence v1.4 indépendant)

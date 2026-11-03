@@ -26,7 +26,7 @@ class ApplicationServeur:
     def __init__(self, racine, **defauts):
         self.racine = racine
         self.racine.title("Serveur de messagerie R309")
-        self.racine.geometry("1050x640")
+        self.racine.geometry("1220x660")
         self.racine.minsize(800, 480)
         self.racine.protocol("WM_DELETE_WINDOW", self.quitter)
         # Thème clair / sombre partagé avec le client (~/.messagerie_theme.json)
@@ -70,6 +70,11 @@ class ApplicationServeur:
         self.bouton_arreter = ttk.Button(cadre, text="■ Arrêter", command=self.arreter,
                                          state="disabled")
         self.bouton_arreter.grid(row=1, column=len(champs) + 1)
+        # Lancement automatique d'un broker local (Mosquitto ou mini-broker Python)
+        self.var_lancer_broker = tk.BooleanVar(value=defauts.get("lancer_broker", True))
+        ttk.Checkbutton(cadre, text="Lancer le broker MQTT local s'il n'est pas déjà démarré",
+                        variable=self.var_lancer_broker).grid(
+            row=2, column=0, columnspan=len(champs), sticky="w", padx=3, pady=(6, 0))
         self.voyant = tk.Label(cadre, text="●", fg=c("doux"), font=("TkDefaultFont", 16))
         self.voyant.grid(row=0, column=len(champs) + 2, rowspan=2, padx=8)
         self.bouton_theme = ttk.Button(cadre, style="Outil.TButton",
@@ -280,7 +285,8 @@ class ApplicationServeur:
                 valeurs["domaine"].lower(), valeurs["hote"], int(valeurs["port"]),
                 valeurs["identifiant"] or None, valeurs["mot_de_passe"] or None,
                 valeurs["donnees"] or "donnees",
-                int(valeurs["port_tcp"]) if valeurs["port_tcp"] else None)
+                int(valeurs["port_tcp"]) if valeurs["port_tcp"] else None,
+                lancer_broker=self.var_lancer_broker.get())
         except ValueError as exc:
             messagebox.showerror("Configuration", str(exc))
             return

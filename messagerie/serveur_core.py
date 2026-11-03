@@ -370,7 +370,8 @@ class ServeurMessagerie:
     """
 
     def __init__(self, domaine="rt.iut", hote="localhost", port=1883,
-                 identifiant=None, mot_de_passe=None, repertoire="donnees", port_tcp=None):
+                 identifiant=None, mot_de_passe=None, repertoire="donnees", port_tcp=None,
+                 lancer_broker=False):
         if not P.domaine_valide(domaine):
             raise ValueError(f"nom de domaine invalide : {domaine!r}")
         self.domaine = domaine
@@ -395,6 +396,9 @@ class ServeurMessagerie:
         self.mqtt = None
         self.port_tcp = int(port_tcp) if port_tcp else None
         self.tcp = None                        # ServeurTCP (protocole v1.4)
+        # lancer_broker : démarrer nous-mêmes un broker MQTT local s'il n'y en a pas
+        self.lancer_broker = lancer_broker
+        self.broker_local = None
         self._echec_mqtt_signale = False
 
         # Table de dispatch : type de requête -> méthode de traitement.
@@ -466,10 +470,29 @@ class ServeurMessagerie:
                 raise
             self.log(f"protocole TCP v1.4 : écoute sur le port {self.port_tcp}")
         if self.hote:
-            self._demarrer_mqtt()
+            from .lanceur_broker import est_local
+            if self.lancer_broker and est_local(self.hote):
+                # Le lancement du broker peut prendre quelques secondes : on le
+                # fait dans un thread pour ne pas figer l'IHM, puis on se connecte.
+                threading.Thread(target=self._broker_puis_mqtt, name="lanceur-broker",
+                                 daemon=True).start()
+            else:
+                self._demarrer_mqtt()
         self._armer_minuterie()
         if self.port_tcp and not self.hote:
             self._signaler("etat", connecte=True)
+
+    def _broker_puis_mqtt(self):
+        from .lanceur_broker import BrokerLocal
+        self.broker_local = BrokerLocal(self.port, self.log)
+        try:
+            self.broker_local.demarrer()
+        except OSError as exc:
+            self.log(f"impossible de lancer un broker sur le port {self.port} : {exc}", "error")
+        if not self._actif:                    # serveur arrêté pendant le lancement
+            self.broker_local.arreter()
+            return
+        self._demarrer_mqtt()
 
     def _demarrer_mqtt(self):
         # clean_session=False : le broker conserve nos abonnements et met en
@@ -532,6 +555,9 @@ class ServeurMessagerie:
         if self.mqtt is not None:
             self.mqtt.disconnect()
             self.mqtt.loop_stop()
+        if self.broker_local is not None:      # seulement s'il a été lancé par nous
+            self.broker_local.arreter()
+            self.broker_local = None
         self.connecte = False
         self.log("serveur arrêté")
         self._signaler("etat", connecte=False)
@@ -901,6 +927,8 @@ def main():
     parser.add_argument("--port", type=int, default=1883)
     parser.add_argument("--port-tcp", type=int, default=5000, help="port du protocole TCP v1.4")
     parser.add_argument("--sans-mqtt", action="store_true", help="TCP v1.4 uniquement")
+    parser.add_argument("--sans-broker", action="store_true",
+                        help="ne pas lancer de broker local automatiquement")
     parser.add_argument("--utilisateur", help="identifiant MQTT du serveur (si ACL)")
     parser.add_argument("--mot-de-passe", help="mot de passe MQTT du serveur (si ACL)")
     parser.add_argument("--donnees", default="donnees", help="répertoire de stockage")
@@ -908,7 +936,8 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     lancer_console(ServeurMessagerie(args.domaine, None if args.sans_mqtt else args.hote,
                                      args.port, args.utilisateur, args.mot_de_passe,
-                                     args.donnees, args.port_tcp))
+                                     args.donnees, args.port_tcp,
+                                     lancer_broker=not args.sans_broker))
 
 
 if __name__ == "__main__":

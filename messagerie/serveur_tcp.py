@@ -139,6 +139,12 @@ class ServeurTCP:
 
     def arreter(self):
         if self.ecoute:
+            # shutdown() débloque l'accept() du thread d'accueil (close() seul ne
+            # suffit pas sous Linux : le port resterait occupé)
+            try:
+                self.ecoute.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             self.ecoute.close()
         for connexion in list(self.connexions):
             connexion.fermer()
